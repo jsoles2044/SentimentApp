@@ -1,62 +1,60 @@
 import streamlit as st
-import turicreate as tc
-import tempfile
-import os
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
 
-st.title("🧠 Sentiment Classifier")
+st.title("🧠 Sentiment Classifier (scikit-learn)")
 
 uploaded_file = st.file_uploader("📤 Upload a CSV file with 'review' and optional 'rating' columns", type=["csv"])
 
 if uploaded_file is not None:
-    # Save uploaded file to temp path
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
-        tmp_file.write(uploaded_file.getvalue())
-        temp_csv_path = tmp_file.name
-
     try:
-        # Load and normalize
-        sf = tc.SFrame.read_csv(temp_csv_path)
-        sf = sf.rename({col: col.strip().lower() for col in sf.column_names()})
+        df = pd.read_csv(uploaded_file)
+        df.columns = [col.strip().lower() for col in df.columns]
         st.success("✅ CSV loaded successfully!")
-        st.write(sf.head())
+        st.write(df.head())
 
-        if "review" not in sf.column_names():
+        if "review" not in df.columns:
             st.warning("⚠️ No 'review' column found. Please include one.")
         else:
-            if "rating" not in sf.column_names():
+            if "rating" not in df.columns:
                 st.warning("⚠️ No 'rating' column found. Cannot generate sentiment labels.")
             else:
-                sf['sentiment'] = sf['rating'].apply(lambda x: int(x) >= 4)
-                sf['word_count'] = tc.text_analytics.count_words(sf['review'])
+                df['sentiment'] = df['rating'].apply(lambda x: int(x) >= 4)
 
-                # Train + evaluate
-                train_data, test_data = sf.random_split(0.8, seed=1)
-                model = tc.logistic_classifier.create(
-                    train_data,
-                    target='sentiment',
-                    features=['word_count'],
-                    validation_set=None,
-                    verbose=False
-                )
+                X = df['review']
+                y = df['sentiment']
 
-                eval_results = model.evaluate(test_data)
-                auc = eval_results['roc_curve']['auc']
+                vectorizer = CountVectorizer()
+                X_vectorized = vectorizer.fit_transform(X)
+
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X_vectorized, y, test_size=0.2, random_state=1)
+
+                model = LogisticRegression(max_iter=1000)
+                model.fit(X_train, y_train)
+
+                y_pred_proba = model.predict_proba(X_test)[:, 1]
+                auc = roc_auc_score(y_test, y_pred_proba)
+
                 st.metric(label="📈 AUC Score", value=f"{auc:.4f}")
                 st.success("✅ Model trained!")
 
-                # Predict sentiment
-                predictions = model.classify(sf)
-                sf['predicted_sentiment_score'] = predictions['probability']
+                # Predict full dataset
+                full_probs = model.predict_proba(X_vectorized)[:, 1]
+                df['predicted_sentiment_score'] = full_probs
 
                 # Most Positive Reviews
                 st.subheader("🌟 Most Positive Reviews")
-                for row in sf.sort('predicted_sentiment_score', ascending=False).head(3):
+                for _, row in df.sort_values('predicted_sentiment_score', ascending=False).head(3).iterrows():
                     st.markdown(f"**Score:** {row['predicted_sentiment_score']:.3f}")
                     st.write(row['review'])
 
                 # Most Negative Reviews
                 st.subheader("💔 Most Negative Reviews")
-                for row in sf.sort('predicted_sentiment_score').head(3):
+                for _, row in df.sort_values('predicted_sentiment_score').head(3).iterrows():
                     st.markdown(f"**Score:** {row['predicted_sentiment_score']:.3f}")
                     st.write(row['review'])
 
