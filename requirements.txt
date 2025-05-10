@@ -1,2 +1,3 @@
 streamlit
-turicreate
+pandas
+scikit-learn
